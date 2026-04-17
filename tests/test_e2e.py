@@ -236,3 +236,87 @@ class TestE7GwasNeverHighConfidence:
                 f"GWAS finding for {f.rsid} must not have high confidence tier, "
                 f"got {f.confidence_tier}"
             )
+
+
+# ---------------------------------------------------------------------------
+# E8: Pipeline-produced Finding generates valid LLM prompt messages
+# ---------------------------------------------------------------------------
+
+class TestE8FindingProducesValidPrompt:
+    """Tests that a real pipeline-produced Finding generates correct prompt messages."""
+
+    def test_pipeline_finding_produces_explain_messages(self, full_pipeline):
+        from app.explain.contract import SYSTEM_PROMPT
+        from app.explain.prompt import build_messages_for_explain
+
+        _con, findings = full_pipeline
+        finding = findings[0]
+        messages = build_messages_for_explain(finding)
+        assert isinstance(messages, list)
+        assert len(messages) == 2
+        assert messages[0]["role"] == "system"
+        assert messages[0]["content"] == SYSTEM_PROMPT
+        assert messages[1]["role"] == "user"
+        assert finding.rsid in messages[1]["content"]
+
+    def test_pipeline_finding_context_contains_all_fields(self, full_pipeline):
+        from app.explain.prompt import build_finding_context
+
+        _con, findings = full_pipeline
+        finding = findings[0]
+        context = build_finding_context(finding)
+        assert finding.rsid in context
+        assert finding.genotype in context
+        assert finding.trait_or_condition in context
+        assert finding.evidence_type.value in context
+
+    def test_pipeline_finding_context_has_claims_sections(self, full_pipeline):
+        from app.explain.prompt import build_finding_context
+
+        _con, findings = full_pipeline
+        finding = findings[0]
+        context = build_finding_context(finding)
+        assert "ALLOWED CLAIMS" in context
+        assert "FORBIDDEN CLAIMS" in context
+        assert "REQUIRED CAVEATS" in context
+
+
+# ---------------------------------------------------------------------------
+# E9: Every finding's forbidden/allowed claims and notes appear in its context
+# ---------------------------------------------------------------------------
+
+class TestE9ForbiddenClaimsInContext:
+    """Tests that every pipeline-produced finding's claims and notes appear in its context."""
+
+    def test_all_findings_forbidden_claims_in_context(self, full_pipeline):
+        from app.explain.prompt import build_finding_context
+
+        _con, findings = full_pipeline
+        for f in findings:
+            context = build_finding_context(f)
+            for claim in f.forbidden_claims:
+                assert claim in context, (
+                    f"Forbidden claim '{claim}' missing from context for {f.rsid}"
+                )
+
+    def test_all_findings_allowed_claims_in_context(self, full_pipeline):
+        from app.explain.prompt import build_finding_context
+
+        _con, findings = full_pipeline
+        for f in findings:
+            context = build_finding_context(f)
+            for claim in f.allowed_claims:
+                assert claim in context, (
+                    f"Allowed claim '{claim}' missing from context for {f.rsid}"
+                )
+
+    def test_all_findings_user_notes_in_context(self, full_pipeline):
+        from app.explain.prompt import build_finding_context
+
+        _con, findings = full_pipeline
+        for f in findings:
+            context = build_finding_context(f)
+            for note in f.user_visible_notes:
+                assert note in context, (
+                    f"User note '{note}' missing from context for {f.rsid}"
+                )

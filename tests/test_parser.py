@@ -143,3 +143,102 @@ class TestFileNotFound:
     def test_nonexistent_file_raises(self):
         with pytest.raises(FileNotFoundError):
             list(parse_myheritage_csv(Path("/nonexistent/path/missing.csv")))
+
+
+# ---------------------------------------------------------------------------
+# BVA: Boundary value analysis for MyHeritage CSV parser
+# ---------------------------------------------------------------------------
+
+class TestParserBVA:
+    """Boundary value analysis for MyHeritage CSV parser."""
+
+    def test_empty_csv_no_data_rows(self, tmp_path):
+        """CSV with only header and no data rows yields empty iterator."""
+        csv_file = tmp_path / "empty.csv"
+        csv_file.write_text("RSID,CHROMOSOME,POSITION,RESULT\n")
+        variants = list(parse_myheritage_csv(csv_file))
+        assert variants == []
+
+    def test_csv_with_only_comments(self, tmp_path):
+        """CSV with only comment lines yields empty iterator."""
+        csv_file = tmp_path / "comments.csv"
+        csv_file.write_text("# comment 1\n# comment 2\nRSID,CHROMOSOME,POSITION,RESULT\n")
+        variants = list(parse_myheritage_csv(csv_file))
+        assert variants == []
+
+    def test_single_valid_row(self, tmp_path):
+        """CSV with a single valid data row yields one variant."""
+        csv_file = tmp_path / "single.csv"
+        csv_file.write_text("RSID,CHROMOSOME,POSITION,RESULT\nrs1,1,100,AA\n")
+        variants = list(parse_myheritage_csv(csv_file))
+        assert len(variants) == 1
+        assert variants[0].rsid == "rs1"
+
+    def test_position_zero(self, tmp_path):
+        """Position=0 should be accepted."""
+        csv_file = tmp_path / "zero_pos.csv"
+        csv_file.write_text("RSID,CHROMOSOME,POSITION,RESULT\nrs1,1,0,AA\n")
+        variants = list(parse_myheritage_csv(csv_file))
+        assert len(variants) == 1
+        assert variants[0].position == 0
+
+    def test_position_very_large(self, tmp_path):
+        """Very large position should be accepted."""
+        csv_file = tmp_path / "large_pos.csv"
+        csv_file.write_text("RSID,CHROMOSOME,POSITION,RESULT\nrs1,1,300000000,AA\n")
+        variants = list(parse_myheritage_csv(csv_file))
+        assert len(variants) == 1
+        assert variants[0].position == 300_000_000
+
+    def test_result_whitespace_only_skipped(self, tmp_path):
+        """Result that is whitespace-only should be treated as no-call and skipped."""
+        csv_file = tmp_path / "whitespace.csv"
+        csv_file.write_text("RSID,CHROMOSOME,POSITION,RESULT\nrs1,1,100,  \n")
+        variants = list(parse_myheritage_csv(csv_file))
+        assert len(variants) == 0
+
+    def test_x_chromosome(self, tmp_path):
+        """X chromosome should be preserved as string."""
+        csv_file = tmp_path / "x_chrom.csv"
+        csv_file.write_text("RSID,CHROMOSOME,POSITION,RESULT\nrs1,X,100,AA\n")
+        variants = list(parse_myheritage_csv(csv_file))
+        assert len(variants) == 1
+        assert variants[0].chromosome == "X"
+
+    def test_extra_columns_ignored(self, tmp_path):
+        """Extra columns in CSV should be ignored."""
+        csv_file = tmp_path / "extra.csv"
+        csv_file.write_text("RSID,CHROMOSOME,POSITION,RESULT,EXTRA\nrs1,1,100,AA,foo\n")
+        variants = list(parse_myheritage_csv(csv_file))
+        assert len(variants) == 1
+        assert variants[0].rsid == "rs1"
+
+
+# ---------------------------------------------------------------------------
+# Wrong-type coverage for parser
+# ---------------------------------------------------------------------------
+
+class TestParserWrongType:
+    """Wrong-type coverage for parser."""
+
+    def test_none_path_raises(self):
+        """None file_path should raise TypeError."""
+        with pytest.raises((TypeError, AttributeError)):
+            list(parse_myheritage_csv(None))
+
+    def test_int_path_raises(self):
+        """Int file_path should raise TypeError."""
+        with pytest.raises((TypeError, AttributeError)):
+            list(parse_myheritage_csv(123))
+
+    def test_nonexistent_file_raises(self, tmp_path):
+        """Non-existent file should raise FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            list(parse_myheritage_csv(tmp_path / "nonexistent.csv"))
+
+    def test_non_integer_position_raises(self, tmp_path):
+        """Non-integer position in CSV should raise ValueError."""
+        csv_file = tmp_path / "bad_pos.csv"
+        csv_file.write_text("RSID,CHROMOSOME,POSITION,RESULT\nrs1,1,abc,AA\n")
+        with pytest.raises(ValueError):
+            list(parse_myheritage_csv(csv_file))

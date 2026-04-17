@@ -1,12 +1,15 @@
 """DuckDB connection and schema initialisation."""
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import duckdb
 
 if TYPE_CHECKING:
     from app.config import Settings
+    from app.models import Finding, SourceRef
 
 
 def get_connection(settings: Settings | None = None) -> duckdb.DuckDBPyConnection:
@@ -88,3 +91,33 @@ def reset_schema(con: duckdb.DuckDBPyConnection) -> None:
     for table in ("findings", "clinvar_variants", "gwas_assoc", "sample_variants"):
         con.execute(f"DROP TABLE IF EXISTS {table}")
     init_schema(con)
+
+
+def get_finding_by_id(
+    con: duckdb.DuckDBPyConnection,
+    finding_id: str,
+) -> Finding | None:
+    """Fetch a single Finding by its UUID, or None if not found."""
+    from app.models import Finding, SourceRef
+
+    row = con.execute(
+        "SELECT * FROM findings WHERE finding_id = ?", [finding_id]
+    ).fetchone()
+    if row is None:
+        return None
+
+    columns = [desc[0] for desc in con.description]
+    row_dict = dict(zip(columns, row))
+
+    for col in ("allowed_claims", "forbidden_claims", "user_visible_notes"):
+        row_dict[col] = json.loads(row_dict[col])
+
+    raw_refs = json.loads(row_dict["source_refs"])
+    row_dict["source_refs"] = [SourceRef(**r) for r in raw_refs]
+
+    raw_ts = row_dict["created_at"]
+    if isinstance(raw_ts, str):
+        row_dict["created_at"] = datetime.fromisoformat(raw_ts)
+    # else: DuckDB already returned a datetime object
+
+    return Finding(**row_dict)

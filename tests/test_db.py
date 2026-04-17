@@ -1,10 +1,13 @@
 """Functional tests for app/db.py -- schema initialization and reset."""
 from __future__ import annotations
 
+import json
+
 import duckdb
 import pytest
 
 from app.db import get_connection, init_schema, reset_schema
+from app.models import Finding, SourceRef
 
 
 # ---------------------------------------------------------------------------
@@ -249,3 +252,200 @@ class TestResetSchema:
             count = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             assert count == 0, f"Table {table} should be empty after reset"
         con.close()
+
+
+# ---------------------------------------------------------------------------
+# F5: get_finding_by_id retrieves and deserializes a Finding
+# ---------------------------------------------------------------------------
+
+def _insert_sample_finding(con, finding_id: str = "test-uuid-123") -> None:
+    """Insert a well-known Finding row for test purposes."""
+    con.execute(
+        """INSERT INTO findings
+        (finding_id, rsid, genotype, source_type, evidence_type,
+         trait_or_condition, effect_allele, effect_direction,
+         effect_size_type, effect_size_value, clinical_significance,
+         review_status, confidence_tier, actionability,
+         allowed_claims, forbidden_claims, user_visible_notes,
+         source_refs, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [
+            finding_id, "rs429358", "CT", "gwas", "association",
+            "Alzheimer's disease", "T", "increased", "odds_ratio", "1.18",
+            None, None, "medium", "none",
+            json.dumps(["association_only", "not_diagnostic", "relative_odds_description"]),
+            json.dumps(["diagnosis", "absolute_risk_estimate", "treatment_recommendation"]),
+            json.dumps(["This is a population-level association.", "A single SNP explains only a small part."]),
+            json.dumps([{"type": "gwas", "id": "GCST000001"}, {"type": "pubmed", "id": "19734902"}]),
+            "2025-01-01T00:00:00+00:00",
+        ],
+    )
+
+
+class TestGetFindingById:
+    def test_get_finding_by_id_returns_finding(self, db_connection):
+        """Retrieving an existing finding returns a Finding instance with correct fields."""
+        from app.db import get_finding_by_id
+
+        _insert_sample_finding(db_connection)
+        result = get_finding_by_id(db_connection, "test-uuid-123")
+
+        assert result is not None
+        assert isinstance(result, Finding)
+        assert result.finding_id == "test-uuid-123"
+        assert result.rsid == "rs429358"
+        assert result.genotype == "CT"
+        assert result.source_type == "gwas"
+        assert result.evidence_type == "association"
+        assert result.trait_or_condition == "Alzheimer's disease"
+        assert result.effect_allele == "T"
+        assert result.effect_direction == "increased"
+        assert result.effect_size_type == "odds_ratio"
+        assert result.effect_size_value == "1.18"
+        assert result.confidence_tier == "medium"
+        assert result.actionability == "none"
+
+    def test_get_finding_by_id_not_found_returns_none(self, db_connection):
+        """Looking up a nonexistent finding_id returns None."""
+        from app.db import get_finding_by_id
+
+        result = get_finding_by_id(db_connection, "nonexistent-uuid")
+        assert result is None
+
+    def test_get_finding_by_id_json_fields_deserialized(self, db_connection):
+        """JSON columns are deserialized into proper Python types."""
+        from app.db import get_finding_by_id
+
+        _insert_sample_finding(db_connection)
+        finding = get_finding_by_id(db_connection, "test-uuid-123")
+
+        assert finding is not None
+
+        # allowed_claims is a list of strings
+        assert isinstance(finding.allowed_claims, list)
+        assert all(isinstance(c, str) for c in finding.allowed_claims)
+        assert "association_only" in finding.allowed_claims
+        assert "not_diagnostic" in finding.allowed_claims
+        assert "relative_odds_description" in finding.allowed_claims
+
+        # forbidden_claims is a list of strings
+        assert isinstance(finding.forbidden_claims, list)
+        assert all(isinstance(c, str) for c in finding.forbidden_claims)
+        assert "diagnosis" in finding.forbidden_claims
+        assert "absolute_risk_estimate" in finding.forbidden_claims
+        assert "treatment_recommendation" in finding.forbidden_claims
+
+        # user_visible_notes is a list of strings
+        assert isinstance(finding.user_visible_notes, list)
+        assert all(isinstance(n, str) for n in finding.user_visible_notes)
+        assert len(finding.user_visible_notes) == 2
+
+        # source_refs is a list of SourceRef objects
+        assert isinstance(finding.source_refs, list)
+        assert len(finding.source_refs) == 2
+        assert all(isinstance(ref, SourceRef) for ref in finding.source_refs)
+        assert finding.source_refs[0].type == "gwas"
+        assert finding.source_refs[0].id == "GCST000001"
+        assert finding.source_refs[1].type == "pubmed"
+        assert finding.source_refs[1].id == "19734902"
+
+
+# ---------------------------------------------------------------------------
+# BVA: Boundary value analysis for get_finding_by_id
+# ---------------------------------------------------------------------------
+
+class TestGetFindingByIdBVA:
+    def test_empty_string_finding_id(self, db_connection):
+        """Empty string finding_id should return None without crashing."""
+        from app.db import get_finding_by_id
+
+        result = get_finding_by_id(db_connection, "")
+        assert result is None
+
+    def test_finding_with_null_optional_fields(self, db_connection):
+        """Finding with NULL optional fields should deserialize those as None."""
+        from app.db import get_finding_by_id
+
+        db_connection.execute(
+            """INSERT INTO findings
+            (finding_id, rsid, genotype, source_type, evidence_type,
+             trait_or_condition, effect_allele, effect_direction,
+             effect_size_type, effect_size_value, clinical_significance,
+             review_status, confidence_tier, actionability,
+             allowed_claims, forbidden_claims, user_visible_notes,
+             source_refs, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                "null-fields-uuid", "rs111111", "GG", "gwas", "association",
+                "Test trait", None, "unclear", "none", None,
+                None, None, "low", "none",
+                json.dumps([]), json.dumps([]), json.dumps([]),
+                json.dumps([]),
+                "2025-01-01T00:00:00+00:00",
+            ],
+        )
+
+        finding = get_finding_by_id(db_connection, "null-fields-uuid")
+        assert finding is not None
+        assert finding.clinical_significance is None
+        assert finding.review_status is None
+        assert finding.effect_allele is None
+        assert finding.effect_size_value is None
+
+    def test_finding_with_empty_json_arrays(self, db_connection):
+        """Finding with empty JSON arrays should deserialize to empty lists."""
+        from app.db import get_finding_by_id
+
+        db_connection.execute(
+            """INSERT INTO findings
+            (finding_id, rsid, genotype, source_type, evidence_type,
+             trait_or_condition, effect_allele, effect_direction,
+             effect_size_type, effect_size_value, clinical_significance,
+             review_status, confidence_tier, actionability,
+             allowed_claims, forbidden_claims, user_visible_notes,
+             source_refs, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                "empty-arrays-uuid", "rs111111", "GG", "gwas", "association",
+                "Test trait", None, "unclear", "none", None,
+                None, None, "low", "none",
+                json.dumps([]), json.dumps([]), json.dumps([]),
+                json.dumps([]),
+                "2025-01-01T00:00:00+00:00",
+            ],
+        )
+
+        finding = get_finding_by_id(db_connection, "empty-arrays-uuid")
+        assert finding is not None
+        assert finding.allowed_claims == []
+        assert finding.forbidden_claims == []
+        assert finding.user_visible_notes == []
+        assert finding.source_refs == []
+
+    def test_finding_with_special_characters_in_trait(self, db_connection):
+        """Trait with special characters should round-trip correctly."""
+        from app.db import get_finding_by_id
+
+        special_trait = "Alzheimer's \"disease\" <test>"
+        db_connection.execute(
+            """INSERT INTO findings
+            (finding_id, rsid, genotype, source_type, evidence_type,
+             trait_or_condition, effect_allele, effect_direction,
+             effect_size_type, effect_size_value, clinical_significance,
+             review_status, confidence_tier, actionability,
+             allowed_claims, forbidden_claims, user_visible_notes,
+             source_refs, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                "special-chars-uuid", "rs222222", "AA", "gwas", "association",
+                special_trait, "A", "increased", "odds_ratio", "1.5",
+                None, None, "medium", "none",
+                json.dumps([]), json.dumps([]), json.dumps([]),
+                json.dumps([]),
+                "2025-01-01T00:00:00+00:00",
+            ],
+        )
+
+        finding = get_finding_by_id(db_connection, "special-chars-uuid")
+        assert finding is not None
+        assert finding.trait_or_condition == special_trait

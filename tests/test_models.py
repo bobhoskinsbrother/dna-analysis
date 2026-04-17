@@ -360,3 +360,171 @@ class TestSourceRef:
     def test_source_ref_missing_id_raises(self):
         with pytest.raises(ValidationError):
             SourceRef(type="gwas")  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# BVA: SampleVariant boundary values
+# ---------------------------------------------------------------------------
+
+class TestSampleVariantBVA:
+    """Boundary value analysis for SampleVariant model."""
+
+    def test_position_zero(self):
+        """Position=0 is a valid degenerate value."""
+        v = SampleVariant(rsid="rs1", chromosome="1", position=0, result="AA")
+        assert v.position == 0
+
+    def test_position_negative(self):
+        """Negative position should still be accepted by the model (validation is upstream)."""
+        v = SampleVariant(rsid="rs1", chromosome="1", position=-1, result="AA")
+        assert v.position == -1
+
+    def test_position_large(self):
+        """Very large position should be accepted."""
+        v = SampleVariant(rsid="rs1", chromosome="1", position=300_000_000, result="AA")
+        assert v.position == 300_000_000
+
+    def test_empty_rsid(self):
+        """Empty rsid is accepted by the model (validation is upstream)."""
+        v = SampleVariant(rsid="", chromosome="1", position=100, result="AA")
+        assert v.rsid == ""
+
+    def test_empty_chromosome(self):
+        """Empty chromosome string is accepted."""
+        v = SampleVariant(rsid="rs1", chromosome="", position=100, result="AA")
+        assert v.chromosome == ""
+
+    def test_empty_result(self):
+        """Empty result string is accepted."""
+        v = SampleVariant(rsid="rs1", chromosome="1", position=100, result="")
+        assert v.result == ""
+
+
+# ---------------------------------------------------------------------------
+# Wrong-type: SampleVariant type rejection
+# ---------------------------------------------------------------------------
+
+class TestSampleVariantWrongType:
+    """Wrong-type coverage for SampleVariant model."""
+
+    def test_position_string_rejected(self):
+        """String position should raise ValidationError."""
+        with pytest.raises(ValidationError):
+            SampleVariant(rsid="rs1", chromosome="1", position="not_a_number", result="AA")
+
+    def test_rsid_none_rejected(self):
+        """None rsid should raise ValidationError."""
+        with pytest.raises(ValidationError):
+            SampleVariant(rsid=None, chromosome="1", position=100, result="AA")
+
+    def test_position_none_rejected(self):
+        """None position should raise ValidationError."""
+        with pytest.raises(ValidationError):
+            SampleVariant(rsid="rs1", chromosome="1", position=None, result="AA")
+
+    def test_chromosome_int_rejected(self):
+        """Int chromosome should raise ValidationError (expects str)."""
+        with pytest.raises(ValidationError):
+            SampleVariant(rsid="rs1", chromosome=1, position=100, result="AA")
+
+
+# ---------------------------------------------------------------------------
+# BVA: AnnotationRecord boundary values
+# ---------------------------------------------------------------------------
+
+class TestAnnotationRecordBVA:
+    """Boundary value analysis for AnnotationRecord model."""
+
+    def test_review_stars_zero(self):
+        """review_stars=0 is a valid boundary (no assertion criteria)."""
+        r = AnnotationRecord(rsid="rs1", genotype="AA", source_type=SourceType.CLINVAR,
+                             trait_or_condition="Test", review_stars=0)
+        assert r.review_stars == 0
+
+    def test_review_stars_four(self):
+        """review_stars=4 is the max valid value."""
+        r = AnnotationRecord(rsid="rs1", genotype="AA", source_type=SourceType.CLINVAR,
+                             trait_or_condition="Test", review_stars=4)
+        assert r.review_stars == 4
+
+    def test_review_stars_five(self):
+        """review_stars=5 is beyond the mapping but model doesn't restrict it."""
+        r = AnnotationRecord(rsid="rs1", genotype="AA", source_type=SourceType.CLINVAR,
+                             trait_or_condition="Test", review_stars=5)
+        assert r.review_stars == 5
+
+    def test_review_stars_negative(self):
+        """Negative review_stars is accepted by model (validation is upstream)."""
+        r = AnnotationRecord(rsid="rs1", genotype="AA", source_type=SourceType.CLINVAR,
+                             trait_or_condition="Test", review_stars=-1)
+        assert r.review_stars == -1
+
+    def test_empty_trait(self):
+        """Empty trait_or_condition is accepted."""
+        r = AnnotationRecord(rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+                             trait_or_condition="")
+        assert r.trait_or_condition == ""
+
+
+# ---------------------------------------------------------------------------
+# Wrong-type: AnnotationRecord type rejection
+# ---------------------------------------------------------------------------
+
+class TestAnnotationRecordWrongType:
+    """Wrong-type coverage for AnnotationRecord."""
+
+    def test_source_type_invalid_string(self):
+        """Invalid source_type string should raise ValidationError."""
+        with pytest.raises(ValidationError):
+            AnnotationRecord(rsid="rs1", genotype="AA", source_type="invalid",
+                             trait_or_condition="Test")
+
+    def test_review_stars_string(self):
+        """String review_stars should raise ValidationError (if not coercible)."""
+        with pytest.raises(ValidationError):
+            AnnotationRecord(rsid="rs1", genotype="AA", source_type=SourceType.CLINVAR,
+                             trait_or_condition="Test", review_stars="three")
+
+    def test_rsid_none_rejected(self):
+        """None rsid should raise ValidationError."""
+        with pytest.raises(ValidationError):
+            AnnotationRecord(rsid=None, genotype="AA", source_type=SourceType.GWAS,
+                             trait_or_condition="Test")
+
+
+# ---------------------------------------------------------------------------
+# BVA: Finding boundary values
+# ---------------------------------------------------------------------------
+
+class TestFindingBVA:
+    """Boundary value analysis for Finding model."""
+
+    def test_empty_allowed_claims(self):
+        """Finding with empty allowed_claims is valid."""
+        f = Finding(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            evidence_type=EvidenceType.ASSOCIATION, trait_or_condition="Test",
+            confidence_tier=ConfidenceTier.LOW, actionability=Actionability.NONE,
+            allowed_claims=[], forbidden_claims=[], user_visible_notes=[], source_refs=[],
+        )
+        assert f.allowed_claims == []
+
+    def test_empty_forbidden_claims(self):
+        """Finding with empty forbidden_claims is valid."""
+        f = Finding(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            evidence_type=EvidenceType.ASSOCIATION, trait_or_condition="Test",
+            confidence_tier=ConfidenceTier.LOW, actionability=Actionability.NONE,
+            allowed_claims=[], forbidden_claims=[], user_visible_notes=[], source_refs=[],
+        )
+        assert f.forbidden_claims == []
+
+    def test_empty_source_refs(self):
+        """Finding with empty source_refs is valid."""
+        f = Finding(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            evidence_type=EvidenceType.ASSOCIATION, trait_or_condition="Test",
+            confidence_tier=ConfidenceTier.LOW, actionability=Actionability.NONE,
+            allowed_claims=[], forbidden_claims=[], user_visible_notes=[], source_refs=[],
+        )
+        assert f.source_refs == []

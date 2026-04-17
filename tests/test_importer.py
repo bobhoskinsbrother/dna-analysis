@@ -253,3 +253,71 @@ class TestReturnValues:
         result = import_clinvar(db_connection, sample_clinvar_txt)
         count = _count_rows(db_connection, "clinvar_variants")
         assert result == count
+
+
+# ---------------------------------------------------------------------------
+# BVA: Boundary value analysis for annotation importers
+# ---------------------------------------------------------------------------
+
+class TestImporterBVA:
+    """Boundary value analysis for annotation importers."""
+
+    def test_gwas_empty_file(self, db_connection, tmp_path):
+        """GWAS file with only header, no data rows, should import 0."""
+        # Create a minimal TSV with just the header
+        # The GWAS file has many columns; the key ones are SNPS and DISEASE/TRAIT
+        header = "DATE ADDED TO CATALOG\tPUBMEDID\tFIRST AUTHOR\tDATE\tJOURNAL\tLINK\tSTUDY\tDISEASE/TRAIT\tINITIAL SAMPLE SIZE\tREPLICATION SAMPLE SIZE\tREGION\tCHR_ID\tCHR_POS\tREPORTED GENE(S)\tMAPPED_GENE\tUPSTREAM_GENE_ID\tDOWNSTREAM_GENE_ID\tSNP_GENE_IDS\tUPSTREAM_GENE_DISTANCE\tDOWNSTREAM_GENE_DISTANCE\tSTRONGEST SNP-RISK ALLELE\tSNPS\tMERGED\tSNP_ID_CURRENT\tCONTEXT\tINTERGENIC\tRISK ALLELE FREQUENCY\tP-VALUE\tPVALUE_MLOG\tP-VALUE (TEXT)\tOR or BETA\t95% CI (TEXT)\tPLATFORM [SNPS PASSING QC]\tCNV\tMAPPED_TRAIT\tMAPPED_TRAIT_URI\tSTUDY ACCESSION\tGENOTYPING TECHNOLOGY"
+        tsv_file = tmp_path / "empty_gwas.tsv"
+        tsv_file.write_text(header + "\n")
+        count = import_gwas_catalog(db_connection, tsv_file)
+        assert count == 0
+
+    def test_clinvar_empty_file(self, db_connection, tmp_path):
+        """ClinVar file with only header, no data rows, should import 0."""
+        header = "#AlleleID\tType\tName\tGeneID\tGeneSymbol\tHGNC_ID\tClinicalSignificance\tClinSigSimple\tLastEvaluated\tRS# (dbSNP)\tnsv/esv (dbVar)\tRCVaccession\tPhenotypeIDS\tPhenotypeList\tOrigin\tOriginSimple\tAssembly\tChromosomeAccession\tChromosome\tStart\tStop\tReferenceAllele\tAlternateAllele\tCytogenetic\tReviewStatus\tNumberOfSubmitters\tGuidelines\tTestedInGTR\tOtherIDs\tSubmitterCategories\tVariationID\tPositionVCF\tReferenceAlleleVCF\tAlternateAlleleVCF\tRS# (dbSNP)\tVariantLength\tRecordStatus\tSourceDatabase\tSource\tAlleleSource"
+        txt_file = tmp_path / "empty_clinvar.txt"
+        txt_file.write_text(header + "\n")
+        count = import_clinvar(db_connection, txt_file)
+        assert count == 0
+
+    def test_clinvar_unknown_review_status_gets_zero_stars(self, db_connection, tmp_path):
+        """ClinVar entry with unknown ReviewStatus should get 0 stars."""
+        # Write a minimal ClinVar file with an unknown ReviewStatus
+        header = "#AlleleID\tType\tName\tGeneID\tGeneSymbol\tHGNC_ID\tClinicalSignificance\tClinSigSimple\tLastEvaluated\tRS# (dbSNP)\tnsv/esv (dbVar)\tRCVaccession\tPhenotypeIDS\tPhenotypeList\tOrigin\tOriginSimple\tAssembly\tChromosomeAccession\tChromosome\tStart\tStop\tReferenceAllele\tAlternateAllele\tCytogenetic\tReviewStatus\tNumberOfSubmitters\tGuidelines\tTestedInGTR\tOtherIDs\tSubmitterCategories\tVariationID\tPositionVCF\tReferenceAlleleVCF\tAlternateAlleleVCF\tRS# (dbSNP)\tVariantLength\tRecordStatus\tSourceDatabase\tSource\tAlleleSource"
+        # Use a known RS# (429358) but an unknown ReviewStatus
+        data = "100\tsingle nucleotide variant\tTestName\t123\tFOO\tHGNC:1\tPathogenic\t1\t2025-01-01\t429358\t-\tRCV1\tMedGen:C1\tTest condition\tgermline\tgermline\tGRCh37\tNC1\t19\t44908684\t44908684\tT\tC\t19p13.2\tcompletely_unknown_status\t1\t-\tN\t-\t1\t100\t44908684\tT\tC\t429358\t1\tcurrent\tClinVar\tClinVar\tSubmitter"
+        txt_file = tmp_path / "unknown_review.txt"
+        txt_file.write_text(header + "\n" + data + "\n")
+        count = import_clinvar(db_connection, txt_file)
+        assert count == 1
+        rows = db_connection.execute("SELECT review_stars FROM clinvar_variants WHERE rsid = 'rs429358'").fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == 0  # Unknown status maps to 0 stars
+
+    def test_gwas_nonexistent_file_raises(self, db_connection, tmp_path):
+        """Non-existent GWAS file should raise FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            import_gwas_catalog(db_connection, tmp_path / "nonexistent.tsv")
+
+    def test_clinvar_nonexistent_file_raises(self, db_connection, tmp_path):
+        """Non-existent ClinVar file should raise FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            import_clinvar(db_connection, tmp_path / "nonexistent.txt")
+
+
+# ---------------------------------------------------------------------------
+# Wrong-type coverage for importers
+# ---------------------------------------------------------------------------
+
+class TestImporterWrongType:
+    """Wrong-type coverage for importers."""
+
+    def test_gwas_none_path_raises(self, db_connection):
+        """None path for GWAS import should raise."""
+        with pytest.raises((TypeError, AttributeError)):
+            import_gwas_catalog(db_connection, None)
+
+    def test_clinvar_none_path_raises(self, db_connection):
+        """None path for ClinVar import should raise."""
+        with pytest.raises((TypeError, AttributeError)):
+            import_clinvar(db_connection, None)

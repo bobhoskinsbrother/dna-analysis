@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -188,3 +189,116 @@ class TestC8Findings:
         # Check for known rsids that should have matched.
         output = result.output
         assert len(output.strip()) > 0, "findings output should not be empty"
+
+
+# ---------------------------------------------------------------------------
+# Fixture: database with findings generated via run-all
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def cli_with_findings(cli_loaded):
+    """Database with findings generated via run-all."""
+    runner, db_path = cli_loaded
+    result = runner.invoke(app, ["run-all"])
+    assert result.exit_code == 0, f"run-all failed: {result.output}"
+    # Get a finding_id from the database
+    import duckdb
+    con = duckdb.connect(str(db_path))
+    row = con.execute("SELECT finding_id FROM findings LIMIT 1").fetchone()
+    con.close()
+    assert row is not None, "run-all should have generated at least one finding"
+    finding_id = row[0]
+    return runner, db_path, finding_id
+
+
+# ---------------------------------------------------------------------------
+# C9: explain command produces LLM explanation for a finding
+# ---------------------------------------------------------------------------
+
+MOCK_EXPLANATION = "This variant rs429358 is associated with Alzheimer's disease in population studies."
+MOCK_ASK_RESPONSE = "This means you carry one copy of the risk allele, which slightly increases your statistical risk."
+
+
+class TestC9Explain:
+    @patch("app.explain.prompt.explain_finding", return_value=MOCK_EXPLANATION)
+    def test_explain_exit_code_zero(self, mock_explain, cli_with_findings):
+        runner, db_path, finding_id = cli_with_findings
+        result = runner.invoke(app, ["explain", finding_id])
+        assert result.exit_code == 0, f"explain failed: {result.output}"
+
+    @patch("app.explain.prompt.explain_finding", return_value=MOCK_EXPLANATION)
+    def test_explain_output_contains_response(self, mock_explain, cli_with_findings):
+        runner, db_path, finding_id = cli_with_findings
+        result = runner.invoke(app, ["explain", finding_id])
+        # Rich Panel wraps text with line breaks; collapse whitespace for comparison
+        collapsed = " ".join(result.output.split())
+        assert "associated with" in collapsed and "Alzheimer" in collapsed, (
+            f"Expected explanation text in output, got: {result.output}"
+        )
+
+    @patch("app.explain.prompt.explain_finding", return_value=MOCK_EXPLANATION)
+    def test_explain_output_contains_rsid(self, mock_explain, cli_with_findings):
+        runner, db_path, finding_id = cli_with_findings
+        result = runner.invoke(app, ["explain", finding_id])
+        # The output should reference the finding's rsid somewhere
+        assert "rs" in result.output.lower(), (
+            f"Expected rsid in output, got: {result.output}"
+        )
+
+    def test_explain_missing_finding_exits_nonzero(self, cli_with_findings):
+        runner, db_path, finding_id = cli_with_findings
+        result = runner.invoke(app, ["explain", "nonexistent-uuid-999"])
+        assert result.exit_code != 0, (
+            f"explain with missing finding should fail, got exit code {result.exit_code}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# C10: ask command sends a question about a finding to the LLM
+# ---------------------------------------------------------------------------
+
+class TestC10Ask:
+    @patch("app.explain.prompt.ask_about_finding", return_value=MOCK_ASK_RESPONSE)
+    def test_ask_exit_code_zero(self, mock_ask, cli_with_findings):
+        runner, db_path, finding_id = cli_with_findings
+        result = runner.invoke(app, ["ask", finding_id, "What does this mean?"])
+        assert result.exit_code == 0, f"ask failed: {result.output}"
+
+    @patch("app.explain.prompt.ask_about_finding", return_value=MOCK_ASK_RESPONSE)
+    def test_ask_output_contains_response(self, mock_ask, cli_with_findings):
+        runner, db_path, finding_id = cli_with_findings
+        result = runner.invoke(app, ["ask", finding_id, "What does this mean?"])
+        # Rich Panel wraps text with line breaks; collapse whitespace for comparison
+        collapsed = " ".join(result.output.split())
+        assert "risk allele" in collapsed and "statistical risk" in collapsed, (
+            f"Expected ask response in output, got: {result.output}"
+        )
+
+    def test_ask_missing_finding_exits_nonzero(self, cli_with_findings):
+        runner, db_path, finding_id = cli_with_findings
+        result = runner.invoke(app, ["ask", "nonexistent-uuid-999", "question"])
+        assert result.exit_code != 0, (
+            f"ask with missing finding should fail, got exit code {result.exit_code}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# C11: BVA tests for explain and ask commands
+# ---------------------------------------------------------------------------
+
+class TestC11ExplainAskBVA:
+    def test_explain_empty_finding_id(self, cli_with_findings):
+        """Empty finding ID should fail gracefully."""
+        runner, db_path, finding_id = cli_with_findings
+        result = runner.invoke(app, ["explain", ""])
+        assert result.exit_code != 0, (
+            f"Empty finding ID should fail, got exit code {result.exit_code}"
+        )
+
+    @patch("app.explain.prompt.ask_about_finding", return_value=MOCK_ASK_RESPONSE)
+    def test_ask_empty_question(self, mock_ask, cli_with_findings):
+        """Empty question string should not crash."""
+        runner, db_path, finding_id = cli_with_findings
+        result = runner.invoke(app, ["ask", finding_id, ""])
+        assert result.exit_code == 0, f"Empty question should not crash: {result.output}"
+

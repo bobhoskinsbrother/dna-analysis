@@ -17,15 +17,19 @@ The main agent acts as **architect and coordinator**. It MUST NOT write implemen
    - **Unit test agent** — writes isolated unit tests (models, services, pure functions). Give it the contracts, file paths, and expected behaviors.
    - **Functional test agent** — writes integration/component tests (DB round-trips, pipeline stages, matcher behavior). Give it the interfaces and interaction patterns.
    - **E2E test agent** — writes end-to-end tests that exercise the full pipeline (CSV ingestion through to Finding output). Give it the user-facing scenarios and acceptance criteria.
-3. **Confirm tests fail** — Run all test suites to verify the new tests fail (red phase). If any test accidentally passes, the agent that wrote it must fix the test expectations.
-4. **Write implementation** — Spawn one or more **implementation agents** in parallel (e.g., one per module) using the Agent tool. Give each agent the architectural plan, contracts, and the failing test file paths so it knows exactly what to satisfy.
-5. **Verify** — Run all tests again to confirm green.
+3. **Validate the tests** — Review rigour before running:
+   - **Unit tests** — Are test cases fully triangulated? If not, reject before test run.
+   - **Functional tests** — Same rigour as unit tests.
+   - **E2E tests** — Do these reflect how an end user would interact with the system? If not, reject.
+4. **Confirm tests fail** — Run all test suites to verify the new tests fail (red phase). If any test accidentally passes, the agent that wrote it must fix the test expectations.
+5. **Write implementation** — Spawn one or more **implementation agents** in parallel (e.g., one per module) using the Agent tool. Give each agent the architectural plan, contracts, and the failing test file paths so it knows exactly what to satisfy.
+6. **Verify** — Run all tests again to confirm green.
    - Never mark any task complete without proving it works.
    - Run tests, check outputs, demonstrate correctness.
-6. **Split the problem** — Offload research, exploration, and parallel analysis to subagents.
+7. **Split the problem** — Offload research, exploration, and parallel analysis to subagents.
    - For complex problems, throw more compute at it via subagents.
    - One task per subagent for focused execution.
-7. **Share the details** — Each spawned agent receives a detailed prompt including:
+8. **Share the details** — Each spawned agent receives a detailed prompt including:
    - The architectural context and plan from the main agent.
    - Specific file paths to create/modify.
    - Interfaces, data shapes, and function signatures to conform to.
@@ -42,6 +46,35 @@ The main agent acts as **architect and coordinator**. It MUST NOT write implemen
 - Do not skip any test level — all three are required for every feature.
 - **DO NOT SKIP ANY TESTS.** Never use `skip:` on tests. All tests must run and pass — no exceptions.
 - **NEVER exclude or skip failing tests.** If a test fails, fix the test or the code — do not exclude it from the test run.
+
+### Writing Tests
+
+When writing tests, apply all of the following systematically. Do not treat any category as optional.
+
+#### Boundary Value Analysis (BVA)
+
+Every function parameter and model field must be tested at its boundaries:
+- **ON point**: the exact boundary value
+- **OFF point**: one step outside the boundary
+- **IN point**: one step inside the boundary
+- **Degenerate values**: empty strings, zero, negative numbers, `None`, empty collections
+- **Default values**: verify the default is applied when the parameter is omitted
+
+#### Wrong-Type Coverage
+
+For every public function parameter and Pydantic model field, test with at least one wrong type:
+- String where int expected, int where string expected, float where int expected
+- `None` where required, bool where string/int expected, list/dict where scalar expected
+- Verify the function raises `TypeError`, `ValidationError`, or equivalent — never silently coerces
+
+#### Translation Edge Cases
+
+For every field mapping or data transformation:
+- Unknown/unmapped enum values — verify at both unit level (raises) AND functional level (proper error, not 500)
+- Null/missing fields that the code expects to be present
+- Extra unexpected fields (should be ignored, not cause errors)
+- Empty collections — must not crash
+- Case sensitivity: verify mappings are exact-match
 
 ### Tests over debugging
 - When something breaks, do NOT reach for logs or manual debugging by default.

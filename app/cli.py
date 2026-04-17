@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 app = typer.Typer(name="dna", help="DNA variant interpreter")
@@ -211,6 +212,7 @@ def list_findings(
         return
 
     table = Table(title=f"Findings ({len(rows)} results)")
+    table.add_column("id", style="dim")
     table.add_column("rsid", style="bold")
     table.add_column("gene/trait")
     table.add_column("confidence", style="bold")
@@ -229,6 +231,7 @@ def list_findings(
         act_style = "[red]discuss_with_clinician[/red]" if act == "discuss_with_clinician" else act
 
         table.add_row(
+            row[col_idx["finding_id"]][:8],
             row[col_idx["rsid"]],
             row[col_idx["trait_or_condition"]],
             conf_style,
@@ -240,3 +243,60 @@ def list_findings(
         )
 
     console.print(table)
+
+
+@app.command()
+def explain(
+    finding_id: str = typer.Argument(..., help="UUID of the finding to explain"),
+) -> None:
+    """Generate a plain-English explanation for a finding."""
+    from app.config import get_settings
+    from app.db import get_connection, get_finding_by_id
+    from app.explain.prompt import explain_finding
+
+    settings = get_settings()
+    con = get_connection(settings)
+    finding = get_finding_by_id(con, finding_id)
+    con.close()
+
+    if finding is None:
+        console.print(f"[red]Finding not found: {finding_id}[/red]")
+        raise typer.Exit(code=1)
+
+    console.print(Panel(
+        f"[bold]{finding.rsid}[/bold] — {finding.trait_or_condition}\n"
+        f"Evidence: {finding.evidence_type} | Confidence: {finding.confidence_tier} | "
+        f"Actionability: {finding.actionability}",
+        title="Finding",
+    ))
+
+    result = explain_finding(finding, settings)
+    console.print(Panel(result, title="Explanation"))
+
+
+@app.command()
+def ask(
+    finding_id: str = typer.Argument(..., help="UUID of the finding"),
+    question: str = typer.Argument(..., help="Follow-up question about the finding"),
+) -> None:
+    """Ask a follow-up question about a specific finding."""
+    from app.config import get_settings
+    from app.db import get_connection, get_finding_by_id
+    from app.explain.prompt import ask_about_finding
+
+    settings = get_settings()
+    con = get_connection(settings)
+    finding = get_finding_by_id(con, finding_id)
+    con.close()
+
+    if finding is None:
+        console.print(f"[red]Finding not found: {finding_id}[/red]")
+        raise typer.Exit(code=1)
+
+    console.print(Panel(
+        f"[bold]{finding.rsid}[/bold] — {finding.trait_or_condition}",
+        title="Finding",
+    ))
+
+    result = ask_about_finding(finding, question, settings)
+    console.print(Panel(result, title="Answer"))

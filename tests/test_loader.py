@@ -171,3 +171,56 @@ class TestDataIntegrity:
         ).fetchone()
         assert row is not None
         assert row[0] is not None
+
+
+# ---------------------------------------------------------------------------
+# BVA: Boundary value analysis for variant loader
+# ---------------------------------------------------------------------------
+
+class TestLoaderBVA:
+    """Boundary value analysis for variant loader."""
+
+    def test_empty_iterator_returns_zero(self, db_connection):
+        """Loading an empty iterator should return 0 and not crash."""
+        count = load_variants(db_connection, iter([]), batch_size=10)
+        assert count == 0
+
+    def test_single_variant(self, db_connection):
+        """Loading a single variant should return 1."""
+        from app.models import SampleVariant
+        variant = SampleVariant(rsid="rs1", chromosome="1", position=100, result="AA")
+        count = load_variants(db_connection, iter([variant]), batch_size=10)
+        assert count == 1
+
+    def test_batch_size_larger_than_data(self, db_connection, sample_csv):
+        """batch_size > number of variants should still work."""
+        count = load_file(db_connection, sample_csv, batch_size=100_000)
+        assert count > 0
+
+    def test_duplicate_rsid_last_write_wins(self, db_connection):
+        """Loading duplicate rsids should use INSERT OR REPLACE — last value wins."""
+        from app.models import SampleVariant
+        v1 = SampleVariant(rsid="rs1", chromosome="1", position=100, result="AA")
+        v2 = SampleVariant(rsid="rs1", chromosome="1", position=100, result="GG")
+        load_variants(db_connection, iter([v1, v2]), batch_size=10)
+        rows = db_connection.execute("SELECT result FROM sample_variants WHERE rsid = 'rs1'").fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == "GG"
+
+
+# ---------------------------------------------------------------------------
+# Wrong-type coverage for loader functions
+# ---------------------------------------------------------------------------
+
+class TestLoaderWrongType:
+    """Wrong-type coverage for loader functions."""
+
+    def test_load_file_none_path_raises(self, db_connection):
+        """None file_path should raise an error."""
+        with pytest.raises((TypeError, AttributeError, FileNotFoundError)):
+            load_file(db_connection, None)
+
+    def test_load_file_nonexistent_raises(self, db_connection, tmp_path):
+        """Non-existent file should raise FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            load_file(db_connection, tmp_path / "nonexistent.csv")

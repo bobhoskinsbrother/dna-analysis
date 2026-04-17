@@ -22,6 +22,7 @@ from app.policy.engine import (
     determine_effect_size,
     determine_evidence_type,
     evaluate,
+    parse_p_value,
 )
 
 
@@ -414,3 +415,196 @@ class TestEffectSize:
         size_type, size_value = determine_effect_size(clinvar_record_pathogenic)
         assert size_type == "classification"
         assert size_value == "Pathogenic"
+
+
+# ---------------------------------------------------------------------------
+# BVA: Policy engine boundary values
+# ---------------------------------------------------------------------------
+
+class TestPolicyBoundaryValues:
+    """Boundary value analysis for policy engine functions."""
+
+    def test_or_exactly_one_is_unclear(self):
+        """OR = 1.0 exactly should produce UNCLEAR direction (not increased or decreased)."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            trait_or_condition="Test", odds_ratio="1.0",
+        )
+        result = determine_effect_direction(record)
+        assert result == EffectDirection.UNCLEAR
+
+    def test_or_just_above_one_is_increased(self):
+        """OR = 1.001 should produce INCREASED."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            trait_or_condition="Test", odds_ratio="1.001",
+        )
+        result = determine_effect_direction(record)
+        assert result == EffectDirection.INCREASED
+
+    def test_or_just_below_one_is_decreased(self):
+        """OR = 0.999 should produce DECREASED."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            trait_or_condition="Test", odds_ratio="0.999",
+        )
+        result = determine_effect_direction(record)
+        assert result == EffectDirection.DECREASED
+
+    def test_pvalue_at_genome_wide_boundary(self):
+        """p = 5e-8 exactly -- ON point for genome-wide significance threshold."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            trait_or_condition="Test", p_value="5e-8",
+        )
+        result = determine_confidence_tier(record)
+        # Code uses p < 5e-8, so exactly 5e-8 should be LOW
+        assert result == ConfidenceTier.LOW
+
+    def test_pvalue_just_below_genome_wide(self):
+        """p = 4.9e-8 -- IN point, should be MEDIUM."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            trait_or_condition="Test", p_value="4.9e-8",
+        )
+        result = determine_confidence_tier(record)
+        assert result == ConfidenceTier.MEDIUM
+
+    def test_pvalue_just_above_genome_wide(self):
+        """p = 5.1e-8 -- OFF point, should be LOW."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            trait_or_condition="Test", p_value="5.1e-8",
+        )
+        result = determine_confidence_tier(record)
+        assert result == ConfidenceTier.LOW
+
+    def test_review_stars_boundary_two_three(self):
+        """Stars=2 is MEDIUM, stars=3 is HIGH -- verify boundary."""
+        record_2 = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.CLINVAR,
+            trait_or_condition="Test", review_stars=2,
+        )
+        record_3 = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.CLINVAR,
+            trait_or_condition="Test", review_stars=3,
+        )
+        assert determine_confidence_tier(record_2) == ConfidenceTier.MEDIUM
+        assert determine_confidence_tier(record_3) == ConfidenceTier.HIGH
+
+    def test_pvalue_none_gives_low(self):
+        """None p_value should result in LOW confidence."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            trait_or_condition="Test", p_value=None,
+        )
+        result = determine_confidence_tier(record)
+        assert result == ConfidenceTier.LOW
+
+    def test_pvalue_empty_string_gives_low(self):
+        """Empty string p_value should result in LOW confidence."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            trait_or_condition="Test", p_value="",
+        )
+        result = determine_confidence_tier(record)
+        assert result == ConfidenceTier.LOW
+
+    def test_or_zero_gives_unclear_or_decreased(self):
+        """OR = 0 should be DECREASED (< 1)."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            trait_or_condition="Test", odds_ratio="0",
+        )
+        result = determine_effect_direction(record)
+        assert result == EffectDirection.DECREASED
+
+    def test_pathogenic_case_insensitive(self):
+        """'pathogenic' lowercase should trigger discuss_with_clinician."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.CLINVAR,
+            trait_or_condition="Test", clinical_significance="pathogenic",
+        )
+        result = determine_actionability(record)
+        assert result == Actionability.DISCUSS_WITH_CLINICIAN
+
+    def test_pathogenic_with_trailing_space(self):
+        """'Pathogenic ' with trailing space should still trigger."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.CLINVAR,
+            trait_or_condition="Test", clinical_significance="Pathogenic ",
+        )
+        result = determine_actionability(record)
+        assert result == Actionability.DISCUSS_WITH_CLINICIAN
+
+    def test_high_confidence_clinvar_no_strong_clinical_assertion_forbidden(self):
+        """High confidence ClinVar should NOT have strong_clinical_assertion in forbidden claims."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.CLINVAR,
+            trait_or_condition="Test", clinical_significance="Pathogenic",
+            review_stars=4,
+        )
+        forbidden = build_forbidden_claims(record)
+        assert "strong_clinical_assertion" not in forbidden
+
+    def test_or_above_one_adds_modestly_increased(self):
+        """OR > 1 should add modestly_increased_relative_odds to allowed claims."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            trait_or_condition="Test", odds_ratio="1.5",
+        )
+        allowed = build_allowed_claims(record)
+        assert "modestly_increased_relative_odds" in allowed
+
+    def test_or_below_one_adds_possibly_protective(self):
+        """OR < 1 should add possibly_protective_association to allowed claims."""
+        record = AnnotationRecord(
+            rsid="rs1", genotype="AA", source_type=SourceType.GWAS,
+            trait_or_condition="Test", odds_ratio="0.7",
+        )
+        allowed = build_allowed_claims(record)
+        assert "possibly_protective_association" in allowed
+
+
+# ---------------------------------------------------------------------------
+# BVA: parse_p_value boundary values
+# ---------------------------------------------------------------------------
+
+class TestParsePValueBVA:
+    """Boundary value tests for p-value parsing."""
+
+    def test_parse_none(self):
+        assert parse_p_value(None) is None
+
+    def test_parse_empty_string(self):
+        assert parse_p_value("") is None
+
+    def test_parse_whitespace(self):
+        assert parse_p_value("   ") is None
+
+    def test_parse_standard_scientific(self):
+        result = parse_p_value("3e-9")
+        assert result is not None
+        assert abs(result - 3e-9) < 1e-15
+
+    def test_parse_gwas_format(self):
+        """GWAS catalog 'N x 10-M' format."""
+        result = parse_p_value("2 x 10-8")
+        assert result is not None
+        assert abs(result - 2e-8) < 1e-15
+
+    def test_parse_plain_decimal(self):
+        result = parse_p_value("0.001")
+        assert result is not None
+        assert abs(result - 0.001) < 1e-10
+
+    def test_parse_invalid_string(self):
+        """Non-numeric string should return None."""
+        assert parse_p_value("not_a_number") is None
+
+    def test_parse_negative_coefficient(self):
+        """Negative p-value makes no sense, but parse_p_value should handle gracefully."""
+        result = parse_p_value("-3e-9")
+        # Implementation-dependent: may return negative float or None
+        # The key is it shouldn't crash
+        assert result is None or isinstance(result, float)

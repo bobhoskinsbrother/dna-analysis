@@ -180,3 +180,49 @@ class TestMatchedGenotype:
 
         for record in records:
             assert record.genotype == expected_genotype
+
+
+# ---------------------------------------------------------------------------
+# BVA: Boundary value analysis for rsID matcher
+# ---------------------------------------------------------------------------
+
+class TestMatcherBVA:
+    """Boundary value analysis for rsID matcher."""
+
+    def test_empty_string_rsid(self, loaded_db):
+        """Empty string rsid should return empty list without crashing."""
+        records = match_rsid(loaded_db, "")
+        assert records == []
+
+    def test_match_all_empty_database(self, db_connection):
+        """match_all on empty database (no sample_variants) should return empty list."""
+        records = match_all(db_connection)
+        assert records == []
+
+    def test_match_rsid_case_sensitive(self, loaded_db):
+        """rsid matching should be case-sensitive — 'RS429358' should not match 'rs429358'."""
+        records = match_rsid(loaded_db, "RS429358")
+        assert records == []
+
+    def test_match_rsid_with_whitespace(self, loaded_db):
+        """rsid with leading/trailing whitespace should not match."""
+        records = match_rsid(loaded_db, " rs429358 ")
+        assert records == []
+
+
+# ---------------------------------------------------------------------------
+# Wrong-type coverage for matcher
+# ---------------------------------------------------------------------------
+
+class TestMatcherWrongType:
+    """Wrong-type coverage for matcher."""
+
+    def test_match_rsid_none_returns_empty(self, loaded_db):
+        """None rsid should return empty list (DuckDB coerces None in WHERE clause)."""
+        records = match_rsid(loaded_db, None)
+        assert records == []
+
+    def test_match_rsid_int_raises(self, loaded_db):
+        """Int rsid should raise an error."""
+        with pytest.raises((TypeError, Exception)):
+            match_rsid(loaded_db, 429358)

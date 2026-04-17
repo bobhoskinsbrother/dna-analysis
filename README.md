@@ -24,34 +24,54 @@ All processing runs locally in Docker. Your genetic data never leaves your machi
 
 ```bash
 # All findings, sorted by confidence (high → medium → low)
-docker compose run --rm app dna findings
+./dna findings
 
 # Only actionable findings (worth discussing with a doctor)
-docker compose run --rm app dna findings --actionable
+./dna findings --actionable
 
 # Filter by confidence tier
-docker compose run --rm app dna findings -c high
-docker compose run --rm app dna findings -c medium
+./dna findings -c high
+./dna findings -c medium
 
 # Filter by source database
-docker compose run --rm app dna findings -s clinvar
-docker compose run --rm app dna findings -s gwas
+./dna findings -s clinvar
+./dna findings -s gwas
 
 # Combine filters
-docker compose run --rm app dna findings -a -c high -n 20
+./dna findings -a -c high -n 20
 
 # Look up a specific variant
-docker compose run --rm app dna match rs429358
+./dna match rs429358
 ```
+
+## Explaining findings (Phase 2 — LLM)
+
+```bash
+# Get a plain-English explanation of a finding (uses the finding ID from the table above)
+./dna explain <finding_id>
+
+# Ask a follow-up question about a finding
+./dna ask <finding_id> "What does this mean for my health?"
+```
+
+Requires LLM configuration in `.env`:
+
+```
+DNA_LLM_MODEL=gpt-4o-mini
+DNA_LLM_API_BASE=                  # leave empty for OpenAI, or http://localhost:11434/v1 for Ollama
+DNA_LLM_API_KEY=your-api-key
+```
+
+The LLM never sees your raw DNA data — it only receives pre-scored Finding objects with strict guardrails on what it can and cannot say.
 
 ## Individual pipeline steps
 
 ```bash
-docker compose run --rm app dna init-db                                     # create database
-docker compose run --rm app dna load data/raw/YourFile.csv                  # load genotype data
-docker compose run --rm app dna import-gwas data/curated/gwas_catalog_associations.tsv   # import GWAS
-docker compose run --rm app dna import-clinvar data/curated/variant_summary.txt           # import ClinVar
-docker compose run --rm app dna run-all                                     # match + score all variants
+./dna init-db                                     # create database
+./dna load data/raw/YourFile.csv                  # load genotype data
+./dna import-gwas data/curated/gwas_catalog_associations.tsv   # import GWAS
+./dna import-clinvar data/curated/variant_summary.txt           # import ClinVar
+./dna run-all                                     # match + score all variants
 ```
 
 ## Reset and reload
@@ -87,4 +107,4 @@ GWAS associations are never assigned high confidence regardless of p-value, beca
 
 ## Architecture
 
-See [agents.md](agents.md) for the full specification including database schema, data flow, policy engine rules, and LLM integration plan (Phase 2).
+See [agents.md](agents.md) for the full specification including database schema, data flow, policy engine rules, and LLM guardrails.
