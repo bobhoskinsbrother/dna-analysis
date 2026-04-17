@@ -1,0 +1,13 @@
+dna_analysis.duckdb
+dna_analysis.duckdb.wal
+data/raw/
+data/curated/
+.env
+__pycache__/
+*.egg-info/
+.venv/
+dist/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
