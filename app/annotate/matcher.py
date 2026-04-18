@@ -78,43 +78,66 @@ def match_rsid(con, rsid: str) -> list[AnnotationRecord]:
 def match_all(con) -> list[AnnotationRecord]:
     """Match all rsIDs in sample_variants that have at least one annotation.
 
-    Uses bulk JOINs instead of per-rsID queries for performance at scale.
-    Returns AnnotationRecord objects for every match across GWAS and ClinVar.
+    Uses bulk JOINs. For small datasets only — large datasets should use
+    match_all_chunked() to avoid OOM.
     """
-    records: list[AnnotationRecord] = []
+    return list(match_all_chunked(con))
 
-    # Bulk GWAS matches via JOIN
-    gwas_rows = con.execute("""
+
+def match_count(con) -> int:
+    """Return the total number of annotation matches without materializing them."""
+    gwas = con.execute("""
+        SELECT COUNT(*) FROM sample_variants sv
+        JOIN gwas_assoc g ON g.rsid = sv.rsid
+    """).fetchone()[0]
+    clinvar = con.execute("""
+        SELECT COUNT(*) FROM sample_variants sv
+        JOIN clinvar_variants c ON c.rsid = sv.rsid
+    """).fetchone()[0]
+    return gwas + clinvar
+
+
+def match_all_chunked(con, chunk: int = 5_000):
+    """Yield AnnotationRecord objects in chunks to limit memory.
+
+    Streams GWAS matches first, then ClinVar matches.
+    """
+    # GWAS matches
+    result = con.execute("""
         SELECT sv.rsid, sv.result,
                g.trait, g.p_value, g.odds_ratio, g.effect_allele,
                g.risk_frequency, g.study_accession, g.pubmed_id, g.mapped_gene
         FROM sample_variants sv
         JOIN gwas_assoc g ON g.rsid = sv.rsid
-    """).fetchall()
+    """)
+    while True:
+        rows = result.fetchmany(chunk)
+        if not rows:
+            break
+        for row in rows:
+            yield AnnotationRecord(
+                rsid=row[0], genotype=row[1], source_type=SourceType.GWAS,
+                trait_or_condition=row[2] or "",
+                p_value=row[3], odds_ratio=row[4], effect_allele=row[5],
+                study_accession=row[7], pubmed_id=row[8], mapped_gene=row[9],
+            )
 
-    for row in gwas_rows:
-        records.append(AnnotationRecord(
-            rsid=row[0], genotype=row[1], source_type=SourceType.GWAS,
-            trait_or_condition=row[2] or "",
-            p_value=row[3], odds_ratio=row[4], effect_allele=row[5],
-            study_accession=row[7], pubmed_id=row[8], mapped_gene=row[9],
-        ))
-
-    # Bulk ClinVar matches via JOIN
-    clinvar_rows = con.execute("""
+    # ClinVar matches
+    result = con.execute("""
         SELECT sv.rsid, sv.result,
                c.condition_name, c.clinical_significance, c.review_status,
                c.review_stars, c.variation_id, c.gene_symbol, c.variation_type
         FROM sample_variants sv
         JOIN clinvar_variants c ON c.rsid = sv.rsid
-    """).fetchall()
-
-    for row in clinvar_rows:
-        records.append(AnnotationRecord(
-            rsid=row[0], genotype=row[1], source_type=SourceType.CLINVAR,
-            trait_or_condition=row[2] or "",
-            clinical_significance=row[3], review_status=row[4],
-            review_stars=row[5], variation_id=row[6], mapped_gene=row[7],
-        ))
-
-    return records
+    """)
+    while True:
+        rows = result.fetchmany(chunk)
+        if not rows:
+            break
+        for row in rows:
+            yield AnnotationRecord(
+                rsid=row[0], genotype=row[1], source_type=SourceType.CLINVAR,
+                trait_or_condition=row[2] or "",
+                clinical_significance=row[3], review_status=row[4],
+                review_stars=row[5], variation_id=row[6], mapped_gene=row[7],
+            )

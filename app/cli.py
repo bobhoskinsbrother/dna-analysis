@@ -126,24 +126,24 @@ def match(rsid: str = typer.Argument(..., help="rsID to match, e.g. rs429358")) 
 def run_all() -> None:
     """Match all variants, score them, and persist findings to the database."""
     import json
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+
     from app.config import get_settings
     from app.db import get_connection
-    from app.annotate.matcher import match_all
+    from app.annotate.matcher import match_all_chunked, match_count
     from app.policy.engine import evaluate
 
     settings = get_settings()
     con = get_connection(settings)
 
-    console.print("Matching variants against annotation databases...")
-    records = match_all(con)
-    console.print(f"Found {len(records)} annotation matches")
+    console.print("Counting annotation matches...")
+    total = match_count(con)
+    console.print(f"Found {total:,} annotation matches")
 
-    if not records:
+    if total == 0:
         con.close()
         console.print("No matches found. Make sure you have loaded genotype data and imported annotations.")
         return
-
-    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
     sql = """INSERT OR REPLACE INTO findings
         (finding_id, rsid, genotype, source_type, evidence_type,
@@ -157,7 +157,6 @@ def run_all() -> None:
     batch: list[tuple] = []
     batch_size = 5_000
     count = 0
-    total = len(records)
 
     with Progress(
         SpinnerColumn(),
@@ -169,7 +168,7 @@ def run_all() -> None:
         task = progress.add_task("Scoring findings...", total=total)
 
         con.begin()
-        for record in records:
+        for record in match_all_chunked(con):
             finding = evaluate(record)
             batch.append((
                 finding.finding_id, finding.rsid, finding.genotype,
