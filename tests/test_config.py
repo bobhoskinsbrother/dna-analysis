@@ -71,8 +71,9 @@ class TestSettingsBVA:
         s = Settings(db_path=Path("/tmp/test.duckdb"))
         assert s.llm_model == "claude-sonnet-4-6"
 
-    def test_llm_api_key_default(self):
-        """Default llm_api_key is 'not-set'."""
+    def test_llm_api_key_default(self, monkeypatch):
+        """Default llm_api_key is 'not-set' when env var is unset."""
+        monkeypatch.delenv("DNA_LLM_API_KEY", raising=False)
         s = Settings(db_path=Path("/tmp/test.duckdb"))
         assert s.llm_api_key == "not-set"
 
