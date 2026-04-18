@@ -189,6 +189,8 @@ def run_all() -> None:
 
             if len(batch) >= batch_size:
                 con.executemany(sql, batch)
+                con.commit()
+                con.begin()
                 batch = []
 
         if batch:

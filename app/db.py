@@ -19,7 +19,7 @@ def get_connection(settings: Settings | None = None) -> duckdb.DuckDBPyConnectio
 
         settings = get_settings()
     con = duckdb.connect(str(settings.db_path))
-    con.execute("SET memory_limit = '2GB'")
+    con.execute("SET memory_limit = '4GB'")
     con.execute("SET threads = 2")
     con.execute("SET preserve_insertion_order = false")
     return con
