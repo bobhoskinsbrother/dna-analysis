@@ -1,9 +1,7 @@
 services:
   app:
     build: .
-    env_file:
-      - path: .env
-        required: false
+    env_file: .env
     volumes:
       - .:/app
     working_dir: /app
