@@ -105,7 +105,8 @@ def get_finding_by_id(
     from app.models import Finding, SourceRef
 
     row = con.execute(
-        "SELECT * FROM findings WHERE finding_id = ?", [finding_id]
+        "SELECT * FROM findings WHERE finding_id = ? OR finding_id LIKE ? || '%'",
+        [finding_id, finding_id],
     ).fetchone()
     if row is None:
         return None
