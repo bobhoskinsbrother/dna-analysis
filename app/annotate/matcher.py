@@ -78,19 +78,43 @@ def match_rsid(con, rsid: str) -> list[AnnotationRecord]:
 def match_all(con) -> list[AnnotationRecord]:
     """Match all rsIDs in sample_variants that have at least one annotation.
 
+    Uses bulk JOINs instead of per-rsID queries for performance at scale.
     Returns AnnotationRecord objects for every match across GWAS and ClinVar.
     """
-    # Get all rsids from sample_variants that have at least one annotation match
-    rsid_rows = con.execute("""
-        SELECT DISTINCT sv.rsid, sv.result
+    records: list[AnnotationRecord] = []
+
+    # Bulk GWAS matches via JOIN
+    gwas_rows = con.execute("""
+        SELECT sv.rsid, sv.result,
+               g.trait, g.p_value, g.odds_ratio, g.effect_allele,
+               g.risk_frequency, g.study_accession, g.pubmed_id, g.mapped_gene
         FROM sample_variants sv
-        WHERE EXISTS (SELECT 1 FROM gwas_assoc g WHERE g.rsid = sv.rsid)
-           OR EXISTS (SELECT 1 FROM clinvar_variants c WHERE c.rsid = sv.rsid)
+        JOIN gwas_assoc g ON g.rsid = sv.rsid
     """).fetchall()
 
-    records: list[AnnotationRecord] = []
-    for rsid, genotype in rsid_rows:
-        records.extend(_gwas_records_for_rsid(con, rsid, genotype))
-        records.extend(_clinvar_records_for_rsid(con, rsid, genotype))
+    for row in gwas_rows:
+        records.append(AnnotationRecord(
+            rsid=row[0], genotype=row[1], source_type=SourceType.GWAS,
+            trait_or_condition=row[2] or "",
+            p_value=row[3], odds_ratio=row[4], effect_allele=row[5],
+            study_accession=row[7], pubmed_id=row[8], mapped_gene=row[9],
+        ))
+
+    # Bulk ClinVar matches via JOIN
+    clinvar_rows = con.execute("""
+        SELECT sv.rsid, sv.result,
+               c.condition_name, c.clinical_significance, c.review_status,
+               c.review_stars, c.variation_id, c.gene_symbol, c.variation_type
+        FROM sample_variants sv
+        JOIN clinvar_variants c ON c.rsid = sv.rsid
+    """).fetchall()
+
+    for row in clinvar_rows:
+        records.append(AnnotationRecord(
+            rsid=row[0], genotype=row[1], source_type=SourceType.CLINVAR,
+            trait_or_condition=row[2] or "",
+            clinical_significance=row[3], review_status=row[4],
+            review_stars=row[5], variation_id=row[6], mapped_gene=row[7],
+        ))
 
     return records

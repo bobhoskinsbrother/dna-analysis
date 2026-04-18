@@ -61,9 +61,10 @@ def import_gwas(file: Path = typer.Argument(..., help="Path to GWAS Catalog TSV 
 
     settings = get_settings()
     con = get_connection(settings)
+    console.print(f"Importing {file.name}...")
     count = import_gwas_catalog(con, file)
     con.close()
-    console.print(f"Imported {count} GWAS associations")
+    console.print(f"[green]Imported {count:,} GWAS associations[/green]")
 
 
 @app.command()
@@ -79,9 +80,10 @@ def import_clinvar(file: Path = typer.Argument(..., help="Path to ClinVar varian
 
     settings = get_settings()
     con = get_connection(settings)
+    console.print(f"Importing {file.name}...")
     count = _import_clinvar(con, file)
     con.close()
-    console.print(f"Imported {count} ClinVar variants")
+    console.print(f"[green]Imported {count:,} ClinVar variants[/green]")
 
 
 @app.command()
