@@ -28,6 +28,8 @@ def init_db() -> None:
 @app.command()
 def load(file: Path = typer.Argument(..., help="Path to MyHeritage CSV file")) -> None:
     """Load a MyHeritage CSV file into sample_variants."""
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+
     from app.config import get_settings
     from app.db import get_connection
     from app.ingest.loader import load_file
@@ -38,9 +40,12 @@ def load(file: Path = typer.Argument(..., help="Path to MyHeritage CSV file")) -
 
     settings = get_settings()
     con = get_connection(settings)
+
+    console.print(f"Loading {file.name}...")
     count = load_file(con, file, settings.batch_size)
+
     con.close()
-    console.print(f"Loaded {count} rows from {file.name}")
+    console.print(f"[green]Loaded {count:,} rows from {file.name}[/green]")
 
 
 @app.command()
