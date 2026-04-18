@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import openai
-
 from app.explain.contract import SYSTEM_PROMPT
 
 if TYPE_CHECKING:
@@ -62,31 +60,50 @@ def build_messages_for_ask(finding: Finding, question: str) -> list[dict]:
     ]
 
 
-def get_llm_client(settings: Settings) -> openai.OpenAI:
-    """Create an OpenAI client from application settings."""
+def _is_anthropic(settings: Settings) -> bool:
+    return settings.llm_model.startswith("claude")
+
+
+def _call_anthropic(messages: list[dict], settings: Settings) -> str:
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=settings.llm_api_key)
+    system = next((m["content"] for m in messages if m["role"] == "system"), "")
+    user_messages = [m for m in messages if m["role"] != "system"]
+    response = client.messages.create(
+        model=settings.llm_model,
+        max_tokens=4096,
+        system=system,
+        messages=user_messages,
+    )
+    return response.content[0].text
+
+
+def _call_openai(messages: list[dict], settings: Settings) -> str:
+    import openai
+
     kwargs: dict = {"api_key": settings.llm_api_key}
     if settings.llm_api_base:
         kwargs["base_url"] = settings.llm_api_base
-    return openai.OpenAI(**kwargs)
+    client = openai.OpenAI(**kwargs)
+    response = client.chat.completions.create(
+        model=settings.llm_model,
+        messages=messages,
+    )
+    return response.choices[0].message.content
+
+
+def _call_llm(messages: list[dict], settings: Settings) -> str:
+    if _is_anthropic(settings):
+        return _call_anthropic(messages, settings)
+    return _call_openai(messages, settings)
 
 
 def explain_finding(finding: Finding, settings: Settings) -> str:
     """Generate a plain-English explanation for a single finding."""
-    client = get_llm_client(settings)
-    messages = build_messages_for_explain(finding)
-    response = client.chat.completions.create(
-        model=settings.llm_model,
-        messages=messages,
-    )
-    return response.choices[0].message.content
+    return _call_llm(build_messages_for_explain(finding), settings)
 
 
 def ask_about_finding(finding: Finding, question: str, settings: Settings) -> str:
     """Answer a user question about a specific finding."""
-    client = get_llm_client(settings)
-    messages = build_messages_for_ask(finding, question)
-    response = client.chat.completions.create(
-        model=settings.llm_model,
-        messages=messages,
-    )
-    return response.choices[0].message.content
+    return _call_llm(build_messages_for_ask(finding, question), settings)
