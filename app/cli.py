@@ -143,20 +143,35 @@ def run_all() -> None:
         console.print("No matches found. Make sure you have loaded genotype data and imported annotations.")
         return
 
-    console.print("Scoring findings through policy engine...")
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+
+    sql = """INSERT OR REPLACE INTO findings
+        (finding_id, rsid, genotype, source_type, evidence_type,
+         trait_or_condition, effect_allele, effect_direction,
+         effect_size_type, effect_size_value, clinical_significance,
+         review_status, confidence_tier, actionability,
+         allowed_claims, forbidden_claims, user_visible_notes,
+         source_refs, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
+    batch: list[tuple] = []
+    batch_size = 5_000
     count = 0
-    for record in records:
-        finding = evaluate(record)
-        con.execute(
-            """INSERT OR REPLACE INTO findings
-            (finding_id, rsid, genotype, source_type, evidence_type,
-             trait_or_condition, effect_allele, effect_direction,
-             effect_size_type, effect_size_value, clinical_significance,
-             review_status, confidence_tier, actionability,
-             allowed_claims, forbidden_claims, user_visible_notes,
-             source_refs, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            [
+    total = len(records)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed:,}/{task.total:,}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Scoring findings...", total=total)
+
+        con.begin()
+        for record in records:
+            finding = evaluate(record)
+            batch.append((
                 finding.finding_id, finding.rsid, finding.genotype,
                 finding.source_type, finding.evidence_type,
                 finding.trait_or_condition, finding.effect_allele,
@@ -169,13 +184,21 @@ def run_all() -> None:
                 json.dumps(finding.user_visible_notes),
                 json.dumps([r.model_dump() for r in finding.source_refs]),
                 finding.created_at.isoformat(),
-            ],
-        )
-        count += 1
+            ))
+            count += 1
+            progress.update(task, completed=count)
+
+            if len(batch) >= batch_size:
+                con.executemany(sql, batch)
+                batch = []
+
+        if batch:
+            con.executemany(sql, batch)
+        con.commit()
 
     con.close()
 
-    console.print(f"\n[green]Persisted {count} findings to database.[/green]")
+    console.print(f"[green]Persisted {count:,} findings to database.[/green]")
     console.print("Run [bold]dna findings[/bold] to browse results.")
 
 
