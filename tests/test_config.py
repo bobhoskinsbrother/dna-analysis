@@ -67,14 +67,9 @@ class TestSettingsBVA:
         assert s.batch_size == 0
 
     def test_llm_model_default(self):
-        """Default llm_model is gpt-4o-mini."""
+        """Default llm_model is claude-sonnet-4-6."""
         s = Settings(db_path=Path("/tmp/test.duckdb"))
-        assert s.llm_model == "gpt-4o-mini"
-
-    def test_llm_api_base_default_none(self):
-        """Default llm_api_base is None."""
-        s = Settings(db_path=Path("/tmp/test.duckdb"))
-        assert s.llm_api_base is None
+        assert s.llm_model == "claude-sonnet-4-6"
 
     def test_llm_api_key_default(self):
         """Default llm_api_key is 'not-set'."""

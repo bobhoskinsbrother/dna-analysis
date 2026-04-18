@@ -60,11 +60,7 @@ def build_messages_for_ask(finding: Finding, question: str) -> list[dict]:
     ]
 
 
-def _is_anthropic(settings: Settings) -> bool:
-    return settings.llm_model.startswith("claude")
-
-
-def _call_anthropic(messages: list[dict], settings: Settings) -> str:
+def _call_llm(messages: list[dict], settings: Settings) -> str:
     import anthropic
 
     client = anthropic.Anthropic(api_key=settings.llm_api_key)
@@ -77,26 +73,6 @@ def _call_anthropic(messages: list[dict], settings: Settings) -> str:
         messages=user_messages,
     )
     return response.content[0].text
-
-
-def _call_openai(messages: list[dict], settings: Settings) -> str:
-    import openai
-
-    kwargs: dict = {"api_key": settings.llm_api_key}
-    if settings.llm_api_base:
-        kwargs["base_url"] = settings.llm_api_base
-    client = openai.OpenAI(**kwargs)
-    response = client.chat.completions.create(
-        model=settings.llm_model,
-        messages=messages,
-    )
-    return response.choices[0].message.content
-
-
-def _call_llm(messages: list[dict], settings: Settings) -> str:
-    if _is_anthropic(settings):
-        return _call_anthropic(messages, settings)
-    return _call_openai(messages, settings)
 
 
 def explain_finding(finding: Finding, settings: Settings) -> str:

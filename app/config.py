@@ -12,8 +12,7 @@ class Settings(BaseSettings):
     db_path: Path = Path("dna_analysis.duckdb")
     default_build: str = "GRCh37"
     batch_size: int = 10_000
-    llm_model: str = "gpt-4o-mini"
-    llm_api_base: str | None = None
+    llm_model: str = "claude-sonnet-4-6"
     llm_api_key: str = "not-set"
 
     model_config = {"env_prefix": "DNA_"}
